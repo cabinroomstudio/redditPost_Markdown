@@ -53,8 +53,15 @@ rule_c_new_words = 200
 # rule d: caught the post early, then it took off
 rule_d_score_multiple = 3.0
 rule_d_new_comments = 5
+# rule e: the thread multiplied its substance - works in small/low-score subs
+# where scores stay at 1 and the absolute floors above are never reached
+rule_e_growth_multiple = 2.0
+rule_e_new_words = 150
+rule_e_new_comments = 4
 
 [telegram]
 poll_timeout = 50
 notify_on_version = true
 max_checks_per_tick = 5
+# warn on startup if the bot was down this long (Telegram drops queued shares at 24h)
+offline_warn_hours = 20

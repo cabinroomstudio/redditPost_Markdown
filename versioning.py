@@ -30,7 +30,7 @@ class Metrics:
 @dataclass
 class Decision:
     promote: bool
-    rule: str            # "a".."d", "first", or "" when blocked
+    rule: str            # "a".."e", "first", or "" when blocked
     note: str            # human summary for the changelog / Telegram
     new_comments: int = 0
     new_words: int = 0
@@ -60,7 +60,9 @@ def _summarise(new_comments: int, new_words: int, best_score: int,
         bits.append(f"+{new_comments} comments")
     if new_words:
         bits.append(f"+{new_words:,} words")
-    if best_score and best_author:
+    # In low-score subreddits everything sits at 1 point; calling that a "top
+    # answer" is noise, so only say it when the score actually means something.
+    if best_score >= 5 and best_author:
         bits.append(f"new top answer by u/{best_author} ({best_score} pts)")
     if post_delta > 0:
         bits.append(f"post +{post_delta:,} pts")
@@ -119,6 +121,15 @@ def decide(previous, metrics: Metrics, cfg: VersionCfg, *,
     if (metrics.post_score >= cfg.rule_d_score_multiple * max(prev_post_score, 1)
             and new_comments >= cfg.rule_d_new_comments):
         base.promote, base.rule = True, "d"
+        return base
+
+    # Rule e catches the case the absolute floors miss: a small thread that grew
+    # several times over. In niche subreddits every comment sits at 1 point, so
+    # the score-based rules are blind there and totals never reach the floors.
+    if (metrics.kept_words >= cfg.rule_e_growth_multiple * max(prev_words, 1)
+            and new_words >= cfg.rule_e_new_words
+            and new_comments >= cfg.rule_e_new_comments):
+        base.promote, base.rule = True, "e"
         return base
 
     base.blocked_by = "change below thresholds"

@@ -82,6 +82,7 @@ pass — 12h since the last version, under 6 versions, still inside the 14-day w
 | b | A new comment scoring ≥ max(25, 40% of the old top comment) |
 | c | +15 comments **and** +200 words |
 | d | Post score tripled **and** +5 comments — the "caught it early, then it took off" case |
+| e | The thread at least **doubled** its substance (+150 words, +4 comments) — catches small threads in niche subreddits, where every comment sits at 1 point and the absolute floors above are never reached |
 
 Otherwise the check is silent: metrics are recorded, no file is touched, no message
 is sent. Re-checks follow a decaying ladder from first capture: **+6h, +24h, +3d,
@@ -119,9 +120,17 @@ surviving replies is kept as a stub so answer chains never lose their question.
 ## Known limits
 
 - **Telegram queues undelivered messages for 24 hours.** Laptop off overnight is
-  fine. Off for three days means those shares are lost — the messages stay in the
-  chat, so re-sharing recovers them. Intake is isolated in `telegram.py`, so an
-  email-to-self intake (no expiry) can be added later without touching the engine.
+  fine. Off for three days means those shares are dropped from the queue — and the
+  Bot API cannot read past chat messages, so no backfill is possible. The messages
+  themselves stay in the chat, so forwarding one again captures it normally. On
+  startup the bot detects a gap longer than `offline_warn_hours` (default 20) and
+  messages you to re-send anything from that window, so the loss is visible rather
+  than silent. Intake is isolated in `telegram.py`, so an email-to-self intake
+  (no expiry) can be added later without touching the engine.
+- The scheduled task triggers **at logon**, not at boot: powering the machine on
+  without signing in leaves the bot down.
+- Scheduled re-checks are driven by the database, not the queue, so they are never
+  lost — they simply run late after the machine comes back.
 - Very large threads hit a cap (Arctic Shift: 5,000 comments; the Reddit API: 40
   `more` batches ≈ 4,000). When that happens the file says so above the comments.
 - **Arctic Shift is a community-run service.** If it is down or rate-limits, captures

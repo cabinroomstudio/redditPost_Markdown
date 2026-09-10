@@ -15,7 +15,7 @@ from config import Config
 from fetch import fetch_thread
 from filters import filter_thread, kept_comments
 from render import render, slugify
-from store import add_version, connect, latest_version, now_utc
+from store import add_version, connect, iso, latest_version, now_utc
 from versioning import Metrics, decide, measure
 
 FAILURES: list[str] = []
@@ -177,13 +177,13 @@ def test_render(cfg: Config) -> None:
 
 
 def _metrics(n_comments: int, words_each: int, top_score: int, post_score: int,
-             prefix: str = "c", start: int = 0) -> Metrics:
+             prefix: str = "c", start: int = 0, default_score: int = 5) -> Metrics:
     m = Metrics(post_score=post_score)
     for i in range(start, start + n_comments):
         cid = f"{prefix}{i}"
         m.comment_ids.add(cid)
         m.words_by_id[cid] = words_each
-        m.scores_by_id[cid] = 5
+        m.scores_by_id[cid] = default_score
         m.authors_by_id[cid] = f"user{i}"
         m.kept_words += words_each
     if m.comment_ids:
@@ -248,6 +248,81 @@ def test_gates(cfg: Config) -> None:
     d = decide(previous, grown, vcfg, version_count=vcfg.max_versions, now=later)
     check("version cap respected", not d.promote and "cap" in d.blocked_by, d.blocked_by)
 
+    conn.close()
+
+
+def test_relative_growth_rule(cfg: Config) -> None:
+    """Rule e: small threads in low-score subreddits, where every score is 1."""
+    print("\nrule e: relative growth on small captures")
+    db = Path(tempfile.mkdtemp()) / "test.db"
+    conn = connect(db)
+    vcfg = cfg.versioning
+    later = now_utc() + timedelta(hours=24)
+
+    # A real case: r/claudeskills post captured at 4 comments / 68 words, all 1 pt.
+    small = _metrics(4, 17, top_score=1, post_score=1, default_score=1)
+    add_version(conn, "small01", 1, small, "first capture")
+    previous = latest_version(conn, "small01")
+
+    grown = _metrics(11, 29, top_score=1, post_score=1, start=50, default_score=1)  # +319 words
+    grown.comment_ids |= small.comment_ids
+    grown.words_by_id.update(small.words_by_id)
+    grown.kept_words += small.kept_words
+    d = decide(previous, grown, vcfg, version_count=1, now=later)
+    check("5x growth on a tiny thread promotes (rule e)", d.promote and d.rule == "e", d.rule)
+    check("no bogus 'top answer' when everything is 1 pt",
+          "top answer" not in d.note, d.note)
+
+    # Same absolute delta on a big thread must NOT promote via rule e.
+    big = _metrics(60, 50, top_score=200, post_score=500)   # 3,000 words
+    add_version(conn, "big01", 1, big, "first capture")
+    big_prev = latest_version(conn, "big01")
+    big_grown = _metrics(11, 29, top_score=3, post_score=520, start=90)  # +319 words
+    big_grown.comment_ids |= big.comment_ids
+    big_grown.words_by_id.update(big.words_by_id)
+    big_grown.kept_words += big.kept_words
+    d = decide(big_prev, big_grown, vcfg, version_count=1, now=later)
+    check("same delta on a big thread does NOT promote", not d.promote, d.rule)
+
+    # A big thread that genuinely doubles still promotes.
+    doubled = _metrics(60, 50, top_score=3, post_score=520, start=200)  # +3,000 words
+    doubled.comment_ids |= big.comment_ids
+    doubled.words_by_id.update(big.words_by_id)
+    doubled.kept_words += big.kept_words
+    d = decide(big_prev, doubled, vcfg, version_count=1, now=later)
+    check("big thread doubling still promotes", d.promote, d.blocked_by)
+    conn.close()
+
+
+def test_offline_warning(cfg: Config) -> None:
+    """The bot must flag a gap long enough for Telegram to have dropped shares."""
+    print("\noffline-gap warning")
+    import bot as bot_module
+    from store import set_meta
+
+    db = Path(tempfile.mkdtemp()) / "test.db"
+    conn = connect(db)
+    sent: list[str] = []
+
+    class FakeTg:
+        def send(self, chat_id, text, reply_to=None):
+            sent.append(text)
+
+    class FakeLog:
+        def warning(self, *a): pass
+
+    bot_module.warn_offline_gap(conn, FakeTg(), cfg, "123", FakeLog())
+    check("no warning on first run (nothing missed)", not sent)
+
+    set_meta(conn, "last_seen", iso(now_utc() - timedelta(hours=3)))
+    bot_module.warn_offline_gap(conn, FakeTg(), cfg, "123", FakeLog())
+    check("no warning after a short absence", not sent)
+
+    set_meta(conn, "last_seen", iso(now_utc() - timedelta(hours=30)))
+    bot_module.warn_offline_gap(conn, FakeTg(), cfg, "123", FakeLog())
+    check("warns after 30h offline", len(sent) == 1, str(len(sent)))
+    check("warning tells you what to do",
+          sent and "forward it again" in sent[0], sent[0][:60] if sent else "")
     conn.close()
 
 
@@ -351,6 +426,8 @@ def main() -> int:
     test_filters(cfg)
     test_render(cfg)
     test_gates(cfg)
+    test_relative_growth_rule(cfg)
+    test_offline_warning(cfg)
     test_arctic_backend(cfg)
     test_pipeline(cfg)
     print()

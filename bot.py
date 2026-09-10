@@ -16,7 +16,8 @@ from config import Config
 from http_util import RedditBlocked, RedditHttp
 from pipeline import process_url, recheck_due
 from resolve import NotARedditPost, extract_urls
-from store import connect, get_meta, get_post, parse, retire, set_meta, watched_posts
+from store import (connect, get_meta, get_post, iso, now_utc, parse, retire,
+                   set_meta, watched_posts)
 from telegram import Telegram, TelegramError
 
 HELP = (
@@ -103,6 +104,32 @@ def handle_message(message, cfg: Config, conn, http: RedditHttp, tg: Telegram, l
             log.exception(f"unhandled error on {url}")
 
 
+def warn_offline_gap(conn, tg: Telegram, cfg: Config, allowed: str, log) -> None:
+    """Tell the user when queued shares may have been dropped.
+
+    Telegram holds undelivered bot updates for 24h, and the Bot API cannot read
+    past chat messages - so a share made while this machine was off for longer
+    than that is simply gone, with no error anywhere. The least we can do is turn
+    that silent loss into a visible prompt to re-send.
+    """
+    last_seen = parse(get_meta(conn, "last_seen", ""))
+    if last_seen is None:
+        return  # first run: nothing was missed
+    gap_hours = (now_utc() - last_seen).total_seconds() / 3600
+    if gap_hours < cfg.telegram.offline_warn_hours:
+        return
+    log.warning(f"offline for {gap_hours:.1f}h - queued shares may have expired")
+    if not allowed:
+        return
+    since = last_seen.astimezone().strftime("%d %b %H:%M")
+    until = now_utc().astimezone().strftime("%d %b %H:%M")
+    tg.send(allowed,
+            f"⚠️ I was offline from {since} to {until} ({gap_hours:.0f}h).\n\n"
+            "Telegram only holds undelivered messages for 24h, so anything you shared "
+            "in that window may have been dropped. Scroll up: any link without a reply "
+            "from me was not saved - forward it again and I'll pick it up.")
+
+
 def main() -> int:
     cfg = Config.load()
     log = setup_logging(cfg.paths.log_path)
@@ -121,10 +148,13 @@ def main() -> int:
     offset = int(get_meta(conn, "telegram_offset", "0") or 0)
     allowed = str(cfg.telegram.allowed_chat_id or "")
 
+    warn_offline_gap(conn, tg, cfg, allowed, log)
+
     while True:
         try:
             messages, offset = tg.poll(offset)
             set_meta(conn, "telegram_offset", str(offset))
+            set_meta(conn, "last_seen", iso(now_utc()))
             for message in messages:
                 if allowed and message.chat_id != allowed:
                     log.warning(f"ignoring message from chat {message.chat_id} ({message.sender})")

@@ -120,6 +120,12 @@ class VersionCfg:
     rule_c_new_words: int = 200
     rule_d_score_multiple: float = 3.0
     rule_d_new_comments: int = 5
+    # rule e: relative growth. Small captures in low-score subreddits never trip
+    # the absolute floors above - scores stay at 1 and totals stay small - but a
+    # thread that doubles its substance is worth a version whatever its size.
+    rule_e_growth_multiple: float = 2.0
+    rule_e_new_words: int = 150
+    rule_e_new_comments: int = 4
     # hours after first capture at which re-checks happen
     backoff_hours: list[int] = field(default_factory=lambda: [6, 24, 72, 168, 336])
     retire_after_no_change: int = 2
@@ -132,6 +138,9 @@ class TelegramCfg:
     poll_timeout: int = 50
     notify_on_version: bool = True
     max_checks_per_tick: int = 5
+    # Warn when the bot has been down long enough that Telegram may have dropped
+    # queued shares (its queue holds undelivered updates for 24h).
+    offline_warn_hours: int = 20
 
 
 @dataclass
