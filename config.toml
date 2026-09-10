@@ -1,0 +1,60 @@
+# Tunables. Secrets live in .env, not here.
+
+[paths]
+# Defaults to <your home>/Documents/reddit-notes. Uncomment to put notes elsewhere
+# (an Obsidian vault, a synced folder, ...). Forward slashes work on Windows too.
+# output_dir = "C:/Users/you/Documents/reddit-notes"
+versions_dirname = "_versions"
+
+[reddit]
+# Where threads are fetched from:
+#   "auto"     official Reddit API if credentials are in .env, else Arctic Shift
+#   "arctic"   force the Arctic Shift archive (no credentials needed)
+#   "official" force Reddit's own API (requires a script app)
+backend = "auto"
+# Shown to Reddit in the User-Agent. Your Reddit username. Only used by "official".
+username = ""
+request_delay = 1.2
+comment_limit = 500
+sort = "top"
+max_more_calls = 40
+max_deep_fetches = 10
+
+[arctic]
+# Arctic Shift: community archive serving Reddit-shaped JSON, no auth required.
+base = "https://arctic-shift.photon-reddit.com/api"
+comment_limit = 5000
+timeout = 90
+
+[filters]
+# "light + collapse chatter"
+min_score = 1
+# drop pinned mod/vote-bot boilerplate (stickied AND mod-distinguished)
+drop_stickied_mod = true
+short_len = 15
+short_min_score = 5
+
+[versioning]
+min_hours_between = 12
+max_versions = 6
+watch_days = 14
+# re-check at +6h, +1d, +3d, +7d, +14d after first capture
+backoff_hours = [6, 24, 72, 168, 336]
+retire_after_no_change = 2
+# rule a: substantial new material, proportional to what is already captured
+rule_a_new_words = 400
+rule_a_ratio = 0.20
+# rule b: a genuinely new best answer appeared
+rule_b_min_score = 25
+rule_b_ratio = 0.40
+# rule c: broad discussion growth
+rule_c_new_comments = 15
+rule_c_new_words = 200
+# rule d: caught the post early, then it took off
+rule_d_score_multiple = 3.0
+rule_d_new_comments = 5
+
+[telegram]
+poll_timeout = 50
+notify_on_version = true
+max_checks_per_tick = 5
