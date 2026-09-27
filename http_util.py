@@ -7,6 +7,7 @@ the User-Agent and the auth mode are decided in exactly one place. Swapping in
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import time
 import urllib.error
@@ -32,6 +33,25 @@ BROWSER_HEADERS = {
 
 class RedditBlocked(RuntimeError):
     """Reddit refused the request (403/429 after retries)."""
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Would the same request plausibly succeed later?
+
+    Server errors, rate limits, timeouts, DNS/connection failures and "not
+    indexed yet" from the archives are temporary; a 404 or a malformed link is not.
+    """
+    # Imported lazily: the backends import this module.
+    from backend_arctic import ArcticUnavailable
+    from backend_pullpush import PullPushUnavailable
+    if isinstance(exc, (ArcticUnavailable, PullPushUnavailable)):
+        return True
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code == 429 or exc.code >= 500
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError,
+                        http.client.HTTPException, json.JSONDecodeError)):
+        return True
+    return bool(getattr(exc, "transient", False))
 
 
 class RedditHttp:

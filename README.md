@@ -37,7 +37,11 @@ put `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` in `.env`, and your Reddit
 username in `config.toml` under `[reddit] username`. No Reddit password is needed:
 with only an id and secret the client uses the app-only `client_credentials`
 grant. Once those exist, the official API becomes primary automatically and
-Arctic Shift becomes the fallback. Force either with `[reddit] backend`.
+the archives become the fallback. Force one with `[reddit] backend`.
+
+**Fallback archive.** If Arctic Shift is down, threads are fetched from
+[PullPush](https://pullpush.io) instead (also no credentials). Its data is flat, so
+the tree is rebuilt from parent ids, and scores are as of its last scrape.
 
 Then verify:
 
@@ -109,6 +113,7 @@ surviving replies is kept as a stub so answer chains never lose their question.
 | `resolve.py` | share links (`/s/…`, `redd.it`) → canonical post id |
 | `backends.py` | picks the source and falls back when one is down |
 | `backend_arctic.py` | Arctic Shift fetcher (default, no credentials) |
+| `backend_pullpush.py` | PullPush fetcher (fallback archive, no credentials) |
 | `fetch.py` | Reddit API fetcher + `more` expansion (pooled, 100 ids per call) |
 | `filters.py` | keep/drop rules |
 | `render.py` | thread → markdown |
@@ -133,12 +138,16 @@ surviving replies is kept as a stub so answer chains never lose their question.
   lost — they simply run late after the machine comes back.
 - Very large threads hit a cap (Arctic Shift: 5,000 comments; the Reddit API: 40
   `more` batches ≈ 4,000). When that happens the file says so above the comments.
-- **Arctic Shift is a community-run service.** If it is down or rate-limits, captures
-  fail until it recovers, and the bot tells you which backend failed. Registering the
-  Reddit app (above) removes that dependency — the archive then becomes the fallback
-  rather than the only path.
-- Arctic Shift indexes with a short delay, so a post shared within a minute of being
-  created may not be found yet. Re-share it, or let the +6h re-check pick it up.
+- **The archives are community-run services.** If Arctic Shift is down, PullPush is
+  tried next. If every source fails with a temporary error (5xx, timeout, network
+  down, post not indexed yet), the share is **queued, not dropped**: the bot replies
+  ⏳, retries on a backoff (`[retry] backoff_minutes`), replies with the saved note
+  when it succeeds, and gives up with a message after `give_up_hours` (48).
+  `/status` lists the queue. Scheduled re-checks hit by an outage are retried an hour
+  later without losing their place on the ladder. Registering the Reddit app (above)
+  adds the most reliable source of all.
+- The archives index with a delay, so a post shared within minutes of being created
+  may not be found yet. That counts as temporary: it is queued and retried.
 - A moderator-removed post reports its title as `[ Removed by moderator ]`. The
   original is recovered from the URL slug and the note is flagged
   `removed_by_moderator: true` — the archived comments are still saved.

@@ -52,6 +52,18 @@ def main() -> int:
         except Exception as exc:
             print(f"  FAILED - {exc}")
 
+        print("\nPullPush (fallback, no credentials):")
+        try:
+            payload = http.json_get(
+                f"{cfg.pullpush.base}/reddit/search/submission/?ids=1w6t678",
+                timeout=cfg.pullpush.timeout)
+            data = payload.get("data") or []
+            post = data[0] if data else {}
+            print(f"  OK - {post.get('num_comments')} comments, r/{post.get('subreddit')}")
+            ok = True
+        except Exception as exc:
+            print(f"  FAILED - {exc}")
+
         print("\nReddit official API:")
         if not cfg.reddit.use_oauth:
             print("  skipped - REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET not set in .env")

@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS versions (
     PRIMARY KEY (post_id, version)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS pending (
+    url         TEXT PRIMARY KEY,
+    chat_id     TEXT NOT NULL,
+    message_id  INTEGER,
+    force       INTEGER NOT NULL DEFAULT 0,
+    attempts    INTEGER NOT NULL DEFAULT 1,
+    first_tried TEXT NOT NULL,
+    next_try    TEXT NOT NULL,
+    last_error  TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_posts_due ON posts (retired, next_check_at);
 """
 
@@ -142,6 +152,49 @@ def watched_posts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def retire(conn: sqlite3.Connection, post_id: str) -> None:
     conn.execute("UPDATE posts SET retired = 1, next_check_at = NULL WHERE post_id = ?",
                  (post_id,))
+    conn.commit()
+
+
+def postpone(conn: sqlite3.Connection, post_id: str, when: datetime) -> None:
+    """Move the next check without touching the ladder (used after an outage)."""
+    conn.execute("UPDATE posts SET next_check_at = ? WHERE post_id = ?", (iso(when), post_id))
+    conn.commit()
+
+
+# ---------- retry queue: shares that failed because a source was down ----------
+
+def queue_pending(conn: sqlite3.Connection, url: str, chat_id: str, message_id: int | None,
+                  force: bool, next_try: datetime, error: str) -> None:
+    conn.execute(
+        """INSERT INTO pending (url, chat_id, message_id, force, attempts, first_tried,
+                                next_try, last_error)
+           VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+           ON CONFLICT(url) DO UPDATE SET next_try = excluded.next_try,
+                                          last_error = excluded.last_error""",
+        (url, chat_id, message_id, int(force), iso(now_utc()), iso(next_try), error))
+    conn.commit()
+
+
+def due_pending(conn: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM pending WHERE next_try <= ? ORDER BY next_try LIMIT ?",
+        (iso(now_utc()), limit)).fetchall()
+
+
+def all_pending(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM pending ORDER BY next_try").fetchall()
+
+
+def reschedule_pending(conn: sqlite3.Connection, url: str, next_try: datetime,
+                       error: str) -> None:
+    conn.execute(
+        """UPDATE pending SET attempts = attempts + 1, next_try = ?, last_error = ?
+           WHERE url = ?""", (iso(next_try), error, url))
+    conn.commit()
+
+
+def drop_pending(conn: sqlite3.Connection, url: str) -> None:
+    conn.execute("DELETE FROM pending WHERE url = ?", (url,))
     conn.commit()
 
 

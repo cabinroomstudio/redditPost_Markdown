@@ -8,8 +8,10 @@ versions_dirname = "_versions"
 
 [reddit]
 # Where threads are fetched from:
-#   "auto"     official Reddit API if credentials are in .env, else Arctic Shift
+#   "auto"     official Reddit API if credentials are in .env, then Arctic Shift,
+#              then PullPush - each tried in turn if the previous one fails
 #   "arctic"   force the Arctic Shift archive (no credentials needed)
+#   "pullpush" force the PullPush archive (no credentials needed)
 #   "official" force Reddit's own API (requires a script app)
 backend = "auto"
 # Shown to Reddit in the User-Agent. Your Reddit username. Only used by "official".
@@ -25,6 +27,20 @@ max_deep_fetches = 10
 base = "https://arctic-shift.photon-reddit.com/api"
 comment_limit = 5000
 timeout = 90
+
+[pullpush]
+# PullPush: second community archive, tried when Arctic Shift fails. No auth.
+base = "https://api.pullpush.io"
+max_pages = 50   # x100 comments
+timeout = 60
+
+[retry]
+# Shares that fail because every source is temporarily down are queued and retried.
+# Minutes between attempts; the last value repeats until give_up_hours.
+backoff_minutes = [10, 30, 60, 120, 240]
+give_up_hours = 48
+# A scheduled re-check hit by an outage is retried this soon, keeping its rung.
+recheck_retry_minutes = 60
 
 [filters]
 # "light + collapse chatter"

@@ -81,6 +81,8 @@ class Telegram:
                   "disable_web_page_preview": "true"}
         if reply_to:
             params["reply_to_message_id"] = reply_to
+            # Queued retries reply hours later; still deliver if the original is gone.
+            params["allow_sending_without_reply"] = "true"
         try:
             self._call("sendMessage", params, timeout=30)
         except TelegramError as exc:

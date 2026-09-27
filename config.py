@@ -53,6 +53,24 @@ class ArcticCfg:
 
 
 @dataclass
+class PullPushCfg:
+    """PullPush: second community archive, the fallback when Arctic Shift fails."""
+    base: str = "https://api.pullpush.io"
+    max_pages: int = 50     # x100 comments
+    timeout: int = 60
+
+
+@dataclass
+class RetryCfg:
+    """Links that fail because a source is down are queued, not dropped."""
+    # minutes between attempts; the last value repeats until give_up_hours
+    backoff_minutes: list[int] = field(default_factory=lambda: [10, 30, 60, 120, 240])
+    give_up_hours: int = 48
+    # a re-check hit by an outage is retried this soon, without losing its rung
+    recheck_retry_minutes: int = 60
+
+
+@dataclass
 class RedditCfg:
     # auto = official API when credentials exist, else Arctic Shift; the other
     # one is tried as a fallback. Force with "arctic" or "official".
@@ -148,6 +166,8 @@ class Config:
     paths: Paths = field(default_factory=Paths)
     reddit: RedditCfg = field(default_factory=RedditCfg)
     arctic: ArcticCfg = field(default_factory=ArcticCfg)
+    pullpush: PullPushCfg = field(default_factory=PullPushCfg)
+    retry: RetryCfg = field(default_factory=RetryCfg)
     filters: FilterCfg = field(default_factory=FilterCfg)
     versioning: VersionCfg = field(default_factory=VersionCfg)
     telegram: TelegramCfg = field(default_factory=TelegramCfg)
@@ -159,7 +179,8 @@ class Config:
         path = toml_path or ROOT / "config.toml"
         if path.exists():
             data = tomllib.loads(path.read_text(encoding="utf-8"))
-            for section in ("paths", "reddit", "arctic", "filters", "versioning", "telegram"):
+            for section in ("paths", "reddit", "arctic", "pullpush", "retry", "filters",
+                            "versioning", "telegram"):
                 if section in data:
                     _apply(getattr(cfg, section), data[section])
 

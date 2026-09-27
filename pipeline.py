@@ -3,18 +3,18 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from config import Config
 from backends import get_thread
 from fetch import Thread
 from filters import filter_thread
-from http_util import RedditHttp
+from http_util import RedditHttp, is_transient
 from render import changelog_line, filename_for, render
 from resolve import resolve
 from store import (add_version, all_versions, create_post, get_post, iso, latest_version,
-                   now_utc, parse, retire, update_after_check)
+                   now_utc, parse, postpone, retire, update_after_check)
 from versioning import decide, measure, next_check
 
 
@@ -175,6 +175,12 @@ def recheck_due(cfg: Config, conn, http: RedditHttp, log=print) -> list[Outcome]
             outcomes.append(process(row["post_id"], row["url"], cfg, conn, http, log=log))
         except Exception as exc:
             log(f"re-check failed for {row['post_id']}: {exc}")
-            # Push the next attempt out one rung rather than hammering a broken post.
-            _schedule(cfg, conn, row, False, row["current_version"], None, row["title"])
+            if is_transient(exc):
+                # A source outage says nothing about the thread: try again soon and
+                # keep this rung, so a down archive can't silently skip a check.
+                postpone(conn, row["post_id"],
+                         now_utc() + timedelta(minutes=cfg.retry.recheck_retry_minutes))
+            else:
+                # Push the next attempt out one rung rather than hammering a broken post.
+                _schedule(cfg, conn, row, False, row["current_version"], None, row["title"])
     return outcomes

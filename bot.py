@@ -10,13 +10,15 @@ import logging
 import logging.handlers
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 
 from config import Config
-from http_util import RedditBlocked, RedditHttp
+from http_util import RedditBlocked, RedditHttp, is_transient
 from pipeline import process_url, recheck_due
 from resolve import NotARedditPost, extract_urls
-from store import (connect, get_meta, get_post, iso, now_utc, parse, retire,
+from store import (all_pending, connect, drop_pending, due_pending, get_meta, get_post,
+                   iso, now_utc, parse, queue_pending, reschedule_pending, retire,
                    set_meta, watched_posts)
 from telegram import Telegram, TelegramError
 
@@ -54,14 +56,22 @@ def handle_message(message, cfg: Config, conn, http: RedditHttp, tg: Telegram, l
 
     if text.startswith("/status"):
         rows = watched_posts(conn)
-        if not rows:
+        queued = all_pending(conn)
+        if not rows and not queued:
             reply("Nothing under watch right now.")
             return
-        lines = ["Watching:"]
-        for row in rows[:20]:
-            when = parse(row["next_check_at"])
-            when_str = when.astimezone().strftime("%d %b %H:%M") if when else "—"
-            lines.append(f"• v{row['current_version']} · {row['title'][:50]} → {when_str}")
+        lines = []
+        if rows:
+            lines.append("Watching:")
+            for row in rows[:20]:
+                when = parse(row["next_check_at"])
+                when_str = when.astimezone().strftime("%d %b %H:%M") if when else "—"
+                lines.append(f"• v{row['current_version']} · {row['title'][:50]} → {when_str}")
+        if queued:
+            lines.append("\nWaiting to retry (source was down):")
+            for row in queued[:20]:
+                when = parse(row["next_try"]).astimezone().strftime("%d %b %H:%M")
+                lines.append(f"• {row['url'][:60]} · attempt {row['attempts']} → {when}")
         reply("\n".join(lines))
         return
 
@@ -100,8 +110,57 @@ def handle_message(message, cfg: Config, conn, http: RedditHttp, tg: Telegram, l
             reply(f"🚫 Reddit refused the request.\n{exc}")
             log.error(f"blocked on {url}: {exc}")
         except Exception as exc:
-            reply(f"❌ Failed on that link: {exc}")
-            log.exception(f"unhandled error on {url}")
+            if is_transient(exc):
+                when = now_utc() + timedelta(minutes=_backoff(cfg, 1))
+                queue_pending(conn, url, message.chat_id, message.message_id, force,
+                              when, str(exc))
+                reply(f"⏳ Couldn't fetch that thread right now - the source looks "
+                      f"temporarily down.\n{_short(exc)}\n\nQueued: I'll keep retrying "
+                      f"(next at {when.astimezone():%H:%M}) and reply here once it's saved.")
+                log.warning(f"queued {url} for retry: {exc}")
+            else:
+                reply(f"❌ Failed on that link: {exc}")
+                log.exception(f"unhandled error on {url}")
+
+
+def _backoff(cfg: Config, attempt: int) -> int:
+    """Minutes to wait after the given attempt; the last step repeats."""
+    steps = cfg.retry.backoff_minutes or [60]
+    return steps[min(attempt, len(steps)) - 1]
+
+
+def _short(exc: Exception, limit: int = 300) -> str:
+    text = str(exc)
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def retry_pending(cfg: Config, conn, http: RedditHttp, tg: Telegram, log) -> None:
+    """Re-attempt shares that failed because a source was down."""
+    for row in due_pending(conn, cfg.telegram.max_checks_per_tick):
+        url, chat_id, reply_to = row["url"], row["chat_id"], row["message_id"]
+        attempt = row["attempts"] + 1
+        log.info(f"retrying queued {url} (attempt {attempt})")
+        try:
+            outcome = process_url(url, cfg, conn, http, force=bool(row["force"]),
+                                  log=log.info)
+        except Exception as exc:
+            first = parse(row["first_tried"]) or now_utc()
+            gave_up = now_utc() - first >= timedelta(hours=cfg.retry.give_up_hours)
+            if is_transient(exc) and not gave_up:
+                when = now_utc() + timedelta(minutes=_backoff(cfg, attempt))
+                reschedule_pending(conn, url, when, str(exc))
+                log.warning(f"retry {attempt} failed for {url}: {exc}")
+                continue
+            drop_pending(conn, url)
+            reason = (f"still failing after {cfg.retry.give_up_hours}h of retries"
+                      if gave_up else "a permanent error")
+            tg.send(chat_id, f"❌ Gave up on this link ({reason}):\n{_short(exc)}\n\n"
+                             "Send it again later to retry.", reply_to)
+            log.error(f"gave up on queued {url}: {exc}")
+            continue
+        drop_pending(conn, url)
+        tg.send(chat_id, f"{outcome.message}\n(saved on retry {attempt})", reply_to)
+        log.info(f"{outcome.kind} on retry: {url} -> {outcome.path}")
 
 
 def warn_offline_gap(conn, tg: Telegram, cfg: Config, allowed: str, log) -> None:
@@ -166,6 +225,8 @@ def main() -> int:
                     log.warning(f"no allowlist set; chat id is {message.chat_id}")
                     continue
                 handle_message(message, cfg, conn, http, tg, log)
+
+            retry_pending(cfg, conn, http, tg, log)
 
             for outcome in recheck_due(cfg, conn, http, log=log.info):
                 if outcome.kind == "updated" and cfg.telegram.notify_on_version and allowed:

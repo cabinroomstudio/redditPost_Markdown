@@ -369,6 +369,168 @@ def test_arctic_backend(cfg: Config) -> None:
     check("scores carried through", by_id["t1a"].score == 32)
 
 
+class FakePullPushHttp:
+    """PullPush returns flat search results, paged 100 at a time."""
+
+    def __init__(self, post, flat):
+        self.post = post
+        self.flat = flat
+
+    def json_get(self, url, timeout=None):
+        if "/submission/" in url:
+            return {"data": [self.post] if self.post else []}
+        after = 0
+        if "after=" in url:
+            after = int(url.split("after=")[1].split("&")[0])
+        page = [c for c in self.flat if c["created_utc"] > after]
+        return {"data": sorted(page, key=lambda c: c["created_utc"])[:100]}
+
+
+def test_pullpush_backend(cfg: Config) -> None:
+    print("\npullpush backend")
+    import backend_pullpush
+
+    post = {
+        "id": "pp01", "title": "Fallback thread", "author": "someone",
+        "subreddit": "ClaudeAI", "selftext": "Body.", "score": 30, "num_comments": 3,
+        "created_utc": 1_790_000_000, "permalink": "/r/ClaudeAI/comments/pp01/x/",
+        "is_self": True,
+    }
+    # 250 comments forces three pages; several share a timestamp across a page edge.
+    flat = [{"id": f"c{i}", "parent_id": "t3_pp01", "body": f"Top level answer {i}.",
+             "score": 3, "author": "a", "created_utc": 1_790_000_000 + i // 3}
+            for i in range(250)]
+    flat.append({"id": "r1", "parent_id": "t1_c5", "body": "A reply.", "score": 2,
+                 "author": "b", "created_utc": 1_790_001_000})
+    flat.append({"id": "r2", "parent_id": "t1_r1", "body": "Deeper.", "score": 1,
+                 "author": "c", "created_utc": 1_790_001_001})
+    flat.append({"id": "o1", "parent_id": "t1_gone", "body": "Orphan.", "score": 1,
+                 "author": "d", "created_utc": 1_790_001_002})
+    thread = backend_pullpush.fetch_thread(
+        "pp01", FakePullPushHttp(post, flat), cfg.reddit, cfg.pullpush, log=lambda *a: None)
+    by_id = {c.id: c for c in thread.all_comments()}
+    check("all pages fetched, none lost at page edges", len(by_id) == 253, str(len(by_id)))
+    check("flat list rebuilt into a tree", by_id["r2"].depth == 2
+          and by_id["r1"] in by_id["c5"].replies)
+    check("orphaned reply kept at top level", by_id["o1"] in thread.comments)
+    check("post metadata mapped", thread.title == "Fallback thread"
+          and thread.permalink.startswith("https://www.reddit.com/r/"))
+
+    try:
+        backend_pullpush.fetch_thread("pp01", FakePullPushHttp(None, flat), cfg.reddit,
+                                      cfg.pullpush, log=lambda *a: None)
+        check("unindexed post raises", False)
+    except backend_pullpush.PullPushUnavailable:
+        check("unindexed post raises", True)
+
+
+def test_backend_fallback(cfg: Config) -> None:
+    """Arctic down -> PullPush serves it; all down -> a transient failure."""
+    print("\nbackend fallback")
+    import urllib.error
+    import backends
+    from http_util import is_transient
+
+    def http_error(code):
+        return urllib.error.HTTPError("https://x", code, "err", {}, None)
+
+    class ArcticDown(FakePullPushHttp):
+        def json_get(self, url, timeout=None):
+            if "arctic-shift" in url:
+                raise http_error(500)
+            return super().json_get(url, timeout)
+
+    post = {"id": "pp02", "title": "T", "subreddit": "s", "permalink": "/r/s/comments/pp02/t/"}
+    flat = [{"id": "c1", "parent_id": "t3_pp02", "body": "hi", "score": 1,
+             "created_utc": 1_790_000_000}]
+    local = Config()
+    local.reddit.backend = "auto"
+    local.reddit.client_id = local.reddit.client_secret = ""
+    check("auto without credentials tries both archives",
+          backends.backend_order(local) == ["arctic", "pullpush"])
+    thread = backends.get_thread("pp02", ArcticDown(post, flat), local, log=lambda *a: None)
+    check("falls back to pullpush when arctic 500s", thread.title == "T")
+
+    class AllDown:
+        def json_get(self, url, timeout=None):
+            raise http_error(503)
+    try:
+        backends.get_thread("pp02", AllDown(), local, log=lambda *a: None)
+        check("all sources down raises", False)
+    except backends.SourcesUnavailable as exc:
+        check("all sources down is transient", exc.transient and is_transient(exc))
+
+    check("404 is not transient", not is_transient(http_error(404)))
+    check("500 and 429 are transient", is_transient(http_error(500)) and is_transient(http_error(429)))
+    check("network error is transient", is_transient(urllib.error.URLError("getaddrinfo failed")))
+
+
+def test_retry_queue(cfg: Config) -> None:
+    """A share that fails on an outage is queued, retried, and answered later."""
+    print("\nretry queue")
+    import bot as bot_module
+    from backends import SourcesUnavailable
+    from pipeline import Outcome
+    from store import all_pending
+    from telegram import Incoming
+    import urllib.error
+
+    conn = connect(Path(tempfile.mkdtemp()) / "test.db")
+    sent: list[str] = []
+
+    class FakeTg:
+        def send(self, chat_id, text, reply_to=None):
+            sent.append(text)
+
+    class FakeLog:
+        def info(self, *a): pass
+        def warning(self, *a): pass
+        def error(self, *a): pass
+        def exception(self, *a): pass
+
+    down = SourcesUnavailable([("arctic", urllib.error.HTTPError("u", 500, "e", {}, None))])
+    state = {"fail": True}
+
+    def fake_process_url(url, *a, **k):
+        if state["fail"]:
+            raise down
+        return Outcome("created", "✅ v1 — saved", None, 1)
+
+    original = bot_module.process_url
+    bot_module.process_url = fake_process_url
+    try:
+        url = "https://www.reddit.com/r/x/s/abc"
+        msg = Incoming(chat_id="123", text=url, message_id=7, sender="me")
+        bot_module.handle_message(msg, cfg, conn, None, FakeTg(), FakeLog())
+        check("outage queues the link", len(all_pending(conn)) == 1)
+        check("user told it is queued", sent and "Queued" in sent[-1], sent[-1][:80])
+
+        bot_module.retry_pending(cfg, conn, None, FakeTg(), FakeLog())
+        check("not retried before it is due", len(sent) == 1)
+
+        conn.execute("UPDATE pending SET next_try = ?", (iso(now_utc() - timedelta(minutes=1)),))
+        bot_module.retry_pending(cfg, conn, None, FakeTg(), FakeLog())
+        row = all_pending(conn)[0]
+        check("failed retry reschedules with backoff", row["attempts"] == 2 and len(sent) == 1)
+
+        state["fail"] = False
+        conn.execute("UPDATE pending SET next_try = ?", (iso(now_utc() - timedelta(minutes=1)),))
+        bot_module.retry_pending(cfg, conn, None, FakeTg(), FakeLog())
+        check("success clears the queue", not all_pending(conn))
+        check("success replies with the saved note", "saved on retry" in sent[-1], sent[-1])
+
+        state["fail"] = True
+        bot_module.handle_message(msg, cfg, conn, None, FakeTg(), FakeLog())
+        old = iso(now_utc() - timedelta(hours=cfg.retry.give_up_hours + 1))
+        conn.execute("UPDATE pending SET first_tried = ?, next_try = ?", (old, old))
+        bot_module.retry_pending(cfg, conn, None, FakeTg(), FakeLog())
+        check("gives up after the window", not all_pending(conn) and "Gave up" in sent[-1],
+              sent[-1][:80])
+    finally:
+        bot_module.process_url = original
+    conn.close()
+
+
 def test_pipeline(cfg: Config) -> None:
     """Full capture -> re-check -> archive cycle against a temp output folder."""
     print("\npipeline: capture, version bump, archive")
@@ -429,6 +591,9 @@ def main() -> int:
     test_relative_growth_rule(cfg)
     test_offline_warning(cfg)
     test_arctic_backend(cfg)
+    test_pullpush_backend(cfg)
+    test_backend_fallback(cfg)
+    test_retry_queue(cfg)
     test_pipeline(cfg)
     print()
     if FAILURES:
