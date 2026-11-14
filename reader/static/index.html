@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'">
+<title>Reddit Reader</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <nav id="rail" aria-label="Library">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">R</span>
+      <div>
+        <div class="brand-name">Reddit Reader</div>
+        <div class="brand-sub" id="folder-label"></div>
+      </div>
+    </div>
+    <div class="rail-group" id="views"></div>
+    <div class="rail-head">Subreddits</div>
+    <div class="rail-group" id="subs"></div>
+    <div class="rail-head" id="tags-head" hidden>My tags</div>
+    <div class="rail-group" id="tags"></div>
+    <div class="rail-foot">
+      <button class="link-btn" id="btn-folder" title="Open the notes folder">Open folder</button>
+      <button class="link-btn" id="btn-export" title="Save all your own notes into one markdown file">Export my notes</button>
+      <button class="link-btn" id="btn-keys" title="Keyboard shortcuts">Shortcuts</button>
+    </div>
+  </nav>
+
+  <section id="listpane" aria-label="Notes">
+    <div class="list-top">
+      <div class="search">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4 4"/></svg>
+        <input id="q" type="search" placeholder="Search titles, posts and comments" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="list-meta">
+        <span id="count"></span>
+        <label class="sort">Sort
+          <select id="sort">
+            <option value="captured">Recently saved</option>
+            <option value="posted">Recently posted</option>
+            <option value="opened">Recently opened</option>
+            <option value="score">Top score</option>
+            <option value="comments">Most comments</option>
+            <option value="words">Longest</option>
+            <option value="title">Title A to Z</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <ol id="list" tabindex="0"></ol>
+    <div id="list-empty" class="empty" hidden></div>
+  </section>
+
+  <main id="reader" aria-label="Reader">
+    <div id="progress"><div id="progress-bar"></div></div>
+    <header id="toolbar" hidden>
+      <div class="tb-left">
+        <button class="icon-btn" id="btn-prev" title="Previous note (k)"><svg viewBox="0 0 20 20"><path d="M12 5l-5 5 5 5"/></svg></button>
+        <button class="icon-btn" id="btn-next" title="Next note (j)"><svg viewBox="0 0 20 20"><path d="M8 5l5 5-5 5"/></svg></button>
+        <select id="versions" title="Captured versions"></select>
+      </div>
+      <div class="tb-right">
+        <button class="icon-btn" id="btn-star" title="Star (s)"><svg viewBox="0 0 20 20"><path d="M10 2.8l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 8.1l5-.7z"/></svg></button>
+        <button class="icon-btn" id="btn-read" title="Mark unread (m)"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4"/></svg></button>
+        <button class="icon-btn" id="btn-archive" title="Archive (e)"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="4" rx="1"/><path d="M4.5 8v7.5h11V8M8 11h4"/></svg></button>
+        <button class="icon-btn" id="btn-notes" title="My notes and tags (n)"><svg viewBox="0 0 20 20"><path d="M5 3h7l3 3v11H5z"/><path d="M8 9h4M8 12h4"/></svg></button>
+        <button class="icon-btn" id="btn-type" title="Reading settings"><svg viewBox="0 0 20 20"><path d="M3 16l4-11 4 11M4.4 12.5h5.2M12.5 16l2.5-6.5 2.5 6.5M13.3 14h3.4"/></svg></button>
+        <button class="icon-btn" id="btn-file" title="Show the file"><svg viewBox="0 0 20 20"><path d="M3 6h5l1.5 2H17v8H3z"/></svg></button>
+        <button class="pill-btn" id="btn-open" title="Open on Reddit (o)">Reddit<svg viewBox="0 0 20 20"><path d="M8 4h8v8M16 4l-9 9M13 16H4V7"/></svg></button>
+      </div>
+    </header>
+
+    <div id="typepanel" class="popover" hidden>
+      <div class="pop-row"><span>Theme</span>
+        <div class="seg" data-key="theme">
+          <button data-v="auto">Auto</button><button data-v="light">Light</button><button data-v="sepia">Sepia</button><button data-v="dark">Dark</button>
+        </div>
+      </div>
+      <div class="pop-row"><span>Font</span>
+        <div class="seg" data-key="font"><button data-v="serif">Serif</button><button data-v="sans">Sans</button></div>
+      </div>
+      <div class="pop-row"><span>Size</span>
+        <div class="seg"><button id="size-dn" aria-label="Smaller text">A-</button><span id="size-val"></span><button id="size-up" aria-label="Larger text">A+</button></div>
+      </div>
+      <div class="pop-row"><span>Width</span>
+        <div class="seg" data-key="width"><button data-v="600">Narrow</button><button data-v="720">Medium</button><button data-v="880">Wide</button></div>
+      </div>
+      <div class="pop-row"><span>Replies</span>
+        <div class="seg" data-key="collapse_replies"><button data-v="false">Shown</button><button data-v="true">Collapsed</button></div>
+      </div>
+    </div>
+
+    <div id="scroller">
+      <div id="welcome" class="welcome">
+        <h1>Your saved threads</h1>
+        <p id="welcome-stats"></p>
+        <div id="continue"></div>
+      </div>
+      <article id="article" hidden>
+        <div id="viewing-old" class="banner" hidden></div>
+        <div id="head"></div>
+        <div id="body"></div>
+        <div id="cbar" hidden>
+          <h2 id="ctitle"></h2>
+          <div class="cfilters">
+            <label><input type="checkbox" id="f-op"> OP only</label>
+            <label>Min score <select id="f-score"><option value="-999">Any</option><option value="2">2+</option><option value="5">5+</option><option value="10">10+</option><option value="25">25+</option><option value="50">50+</option></select></label>
+            <button class="link-btn" id="btn-toggle-replies"></button>
+          </div>
+        </div>
+        <div id="comments"></div>
+        <div id="changelog"></div>
+      </article>
+    </div>
+
+    <aside id="drawer" hidden>
+      <div class="drawer-head"><h3>My notes</h3><button class="icon-btn" id="btn-close-drawer" title="Close (n)"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg></button></div>
+      <label class="field-label" for="tag-input">Tags</label>
+      <div id="tag-chips" class="chips"></div>
+      <input id="tag-input" placeholder="Add a tag and press Enter" autocomplete="off">
+      <label class="field-label" for="my-note">Thoughts, takeaways, to-dos</label>
+      <textarea id="my-note" placeholder="Write anything. It saves as you type."></textarea>
+      <div class="saved" id="saved"></div>
+    </aside>
+  </main>
+</div>
+
+<div id="keys" class="modal" hidden>
+  <div class="modal-card">
+    <h3>Keyboard shortcuts</h3>
+    <dl>
+      <dt>j / k</dt><dd>Next / previous note</dd>
+      <dt>/</dt><dd>Search</dd>
+      <dt>s</dt><dd>Star</dd>
+      <dt>m</dt><dd>Toggle read</dd>
+      <dt>e</dt><dd>Archive / unarchive</dd>
+      <dt>n</dt><dd>My notes</dd>
+      <dt>c</dt><dd>Collapse or show replies</dd>
+      <dt>o</dt><dd>Open on Reddit</dd>
+      <dt>Space</dt><dd>Scroll the note</dd>
+      <dt>Esc</dt><dd>Close panels, clear search</dd>
+    </dl>
+    <button class="pill-btn" id="btn-keys-close">Close</button>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

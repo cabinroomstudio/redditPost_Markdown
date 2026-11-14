@@ -3,3 +3,7 @@ state/
 __pycache__/
 *.pyc
 fixtures/*.json
+venv/
+build/
+dist/
+reader/icon.ico
