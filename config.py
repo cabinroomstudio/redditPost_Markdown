@@ -6,6 +6,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import winpaths
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -24,7 +26,8 @@ def load_env(path: Path | None = None) -> None:
 
 @dataclass
 class Paths:
-    output_dir: Path = Path.home() / "Documents" / "reddit-notes"
+    # the real Documents folder, which OneDrive backup may have moved
+    output_dir: Path = field(default_factory=winpaths.default_notes_dir)
     versions_dirname: str = "_versions"
     state_dir: Path = ROOT / "state"
 

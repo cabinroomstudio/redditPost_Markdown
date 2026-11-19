@@ -28,7 +28,10 @@ _VERSION_RE = re.compile(r"\.v(\d+)\.md$")
 
 def default_notes_dir() -> Path:
     env = os.environ.get("REDDIT_NOTES_DIR")
-    return Path(env).expanduser() if env else Path.home() / "Documents" / "reddit-notes"
+    if env:
+        return Path(env).expanduser()
+    import winpaths  # repo root; bundled via build.py --paths
+    return winpaths.default_notes_dir()
 
 
 def parse_front_matter(text: str) -> tuple[dict, str]:
@@ -80,6 +83,8 @@ def render_html(body: str) -> str:
     through, since note text comes from strangers on Reddit; the UI also
     sanitises with an allowlist before inserting."""
     safe = re.sub(r"<(?!https?://[^\s<>]+>)", "&lt;", body)
+    # Reddit escapes ~ and ^ which Python-Markdown does not unescape
+    safe = re.sub(r"\\([~^])", r"\1", safe)
     html = md_lib.markdown(safe, extensions=["extra", "sane_lists"], output_format="html")
     # inside code spans markdown re-escapes our &lt; to &amp;lt;
     return html.replace("&amp;lt;", "&lt;")
@@ -152,6 +157,8 @@ class Library:
             return [], []
         out, skipped = [], []
         for path in sorted(self.folder.glob("*.md")):
+            if path.name.startswith("_"):  # our own exports, e.g. _my-notes.md
+                continue
             note = self._load(path)
             if note is None:
                 skipped.append(path.name)
@@ -236,8 +243,11 @@ class State:
     def note(self, note_id: str) -> dict:
         return self.data["notes"].get(note_id, {})
 
-    def update_note(self, note_id: str, changes: dict) -> dict:
-        allowed = {"read_at", "starred", "my_note", "tags", "pos", "opened_at", "archived"}
+    ALLOWED = {"read_at", "starred", "my_note", "tags", "pos", "opened_at", "archived",
+               "highlights", "saved_comments"}
+
+    def update_note(self, note_id: str, changes: dict, save: bool = True) -> dict:
+        allowed = self.ALLOWED
         entry = self.data["notes"].setdefault(note_id, {})
         for key, value in changes.items():
             if key not in allowed:
@@ -248,8 +258,15 @@ class State:
                 entry[key] = value
         if not entry:
             self.data["notes"].pop(note_id, None)
-        self.save()
+        if save:
+            self.save()
         return entry
+
+    def bulk_update(self, note_ids: list[str], changes: dict) -> dict:
+        """Apply the same changes to many notes with one write."""
+        out = {nid: dict(self.update_note(nid, changes, save=False)) for nid in note_ids}
+        self.save()
+        return out
 
     def update_settings(self, changes: dict) -> dict:
         s = self.data["settings"]

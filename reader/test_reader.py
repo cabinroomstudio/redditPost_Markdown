@@ -73,6 +73,11 @@ class ReaderTests(unittest.TestCase):
         self.assertNotIn("<script", html)
         self.assertIn('href="https://example.com"', html)
 
+    def test_reddit_escaped_tilde_is_unescaped(self):
+        html = render_html("around \\~1% of 2\\^10")
+        self.assertIn("around ~1% of 2^10", html)
+        self.assertNotIn("\\~", html)
+
     def test_search_matches_comments(self):
         lib = Library(self.dir)
         self.assertEqual(lib.search("HELLO someone"), ["abc"])
@@ -93,6 +98,49 @@ class ReaderTests(unittest.TestCase):
         api.update_note("abc", {"read_at": 1.0})  # read long before the file changed
         item = next(n for n in Api(self.dir).library()["notes"] if n["id"] == "abc")
         self.assertTrue(item["updated"])
+
+    def test_highlights_comments_bulk_and_export(self):
+        api = Api(self.dir)
+        hl = [{"id": "h1", "text": "Body text", "where": "post", "note": "key idea"}]
+        sc = [{"key": "someone:1", "author": "someone", "score": 3, "text": "hello"}]
+        api.update_note("abc", {"highlights": hl, "saved_comments": sc})
+        state = State.load(self.dir)
+        self.assertEqual(state.note("abc")["highlights"], hl)
+        self.assertEqual(state.note("abc")["saved_comments"], sc)
+
+        writes = []
+        real_save = api.state.save
+        api.state.save = lambda: (writes.append(1), real_save())
+        api.bulk_update(["abc", "my-doc"], {"starred": True})
+        api.bulk_add_tag(["abc", "my-doc"], "later")
+        api.bulk_read(["abc", "my-doc"], True)
+        api.bulk_set({"abc": {"read_at": None}, "my-doc": {"read_at": None}})
+        self.assertEqual(len(writes), 4)  # one write per bulk call
+        state = State.load(self.dir)
+        self.assertTrue(state.note("my-doc")["starred"])
+        self.assertEqual(state.note("abc")["tags"], ["later"])
+        self.assertNotIn("read_at", state.note("abc"))
+
+        api.reveal = lambda *_: None
+        api.export_my_notes()
+        out = (self.dir / "_my-notes.md").read_text(encoding="utf-8")
+        self.assertIn("> Body text", out)
+        self.assertIn("key idea", out)
+        self.assertIn("**u/someone** · 3 pts", out)
+
+    def test_default_folder_follows_moved_documents(self):
+        import os
+        import winpaths
+        from reader.notes import default_notes_dir
+        moved = self.dir / "OneDrive" / "Documents"
+        real, env = winpaths._known_documents, os.environ.pop("REDDIT_NOTES_DIR", None)
+        winpaths._known_documents = lambda: moved
+        try:
+            self.assertEqual(default_notes_dir(), moved / "reddit-notes")
+        finally:
+            winpaths._known_documents = real
+            if env is not None:
+                os.environ["REDDIT_NOTES_DIR"] = env
 
     def test_broken_state_file_is_kept_not_overwritten(self):
         (self.dir / ".reader-state.json").write_text("{not json", encoding="utf-8")

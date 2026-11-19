@@ -18,6 +18,7 @@
       </div>
     </div>
     <div class="rail-group" id="views"></div>
+    <div class="rail-group"><button class="rail-item" data-stats id="rail-stats"><span class="lbl">Reading stats</span></button></div>
     <div class="rail-head">Subreddits</div>
     <div class="rail-group" id="subs"></div>
     <div class="rail-head" id="tags-head" hidden>My tags</div>
@@ -49,6 +50,21 @@
           </select>
         </label>
       </div>
+      <div class="list-tools" id="list-tools">
+        <button class="tool-btn" id="btn-surprise" title="Open a random unread note (r)">Surprise me</button>
+        <button class="tool-btn" id="btn-allread" title="Mark every note in this list as read">Mark all read</button>
+        <button class="tool-btn" id="btn-select" title="Select several notes (or Ctrl/Shift-click)">Select</button>
+      </div>
+      <div class="bulkbar" id="bulkbar" hidden>
+        <span id="bulk-count"></span>
+        <button data-bulk="fav" title="Add to favorites">Favorite</button>
+        <button data-bulk="read">Read</button>
+        <button data-bulk="unread">Unread</button>
+        <button data-bulk="archive">Archive</button>
+        <button data-bulk="tag">Tag…</button>
+        <button data-bulk="all" title="Select every note in this list">All</button>
+        <button data-bulk="clear" title="Clear selection (Esc)">✕</button>
+      </div>
     </div>
     <ol id="list" tabindex="0"></ol>
     <div id="list-empty" class="empty" hidden></div>
@@ -63,7 +79,7 @@
         <select id="versions" title="Captured versions"></select>
       </div>
       <div class="tb-right">
-        <button class="icon-btn" id="btn-star" title="Star (s)"><svg viewBox="0 0 20 20"><path d="M10 2.8l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 8.1l5-.7z"/></svg></button>
+        <button class="icon-btn" id="btn-star" title="Favorite (f)"><svg viewBox="0 0 20 20"><path d="M10 16.5s-6.5-3.9-6.5-8.6A3.4 3.4 0 0 1 10 6a3.4 3.4 0 0 1 6.5 1.9c0 4.7-6.5 8.6-6.5 8.6z"/></svg></button>
         <button class="icon-btn" id="btn-read" title="Mark unread (m)"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4"/></svg></button>
         <button class="icon-btn" id="btn-archive" title="Archive (e)"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="4" rx="1"/><path d="M4.5 8v7.5h11V8M8 11h4"/></svg></button>
         <button class="icon-btn" id="btn-notes" title="My notes and tags (n)"><svg viewBox="0 0 20 20"><path d="M5 3h7l3 3v11H5z"/><path d="M8 9h4M8 12h4"/></svg></button>
@@ -98,7 +114,9 @@
         <h1>Your saved threads</h1>
         <p id="welcome-stats"></p>
         <div id="continue"></div>
+        <button class="pill-btn" id="btn-surprise2">Surprise me with an unread note</button>
       </div>
+      <section id="stats" hidden></section>
       <article id="article" hidden>
         <div id="viewing-old" class="banner" hidden></div>
         <div id="head"></div>
@@ -134,7 +152,11 @@
     <dl>
       <dt>j / k</dt><dd>Next / previous note</dd>
       <dt>/</dt><dd>Search</dd>
-      <dt>s</dt><dd>Star</dd>
+      <dt>f / s</dt><dd>Favorite</dd>
+      <dt>h</dt><dd>Highlight the selected text</dd>
+      <dt>b</dt><dd>Save the comment under the mouse</dd>
+      <dt>r</dt><dd>Surprise me: a random unread note</dd>
+      <dt>Ctrl/Shift-click</dt><dd>Select several notes</dd>
       <dt>m</dt><dd>Toggle read</dd>
       <dt>e</dt><dd>Archive / unarchive</dd>
       <dt>n</dt><dd>My notes</dd>
@@ -146,7 +168,14 @@
     <button class="pill-btn" id="btn-keys-close">Close</button>
   </div>
 </div>
-<div id="toast" role="status" aria-live="polite"></div>
+<button id="hl-float" hidden title="Highlight (h)">Highlight</button>
+<div id="hl-pop" class="popover" hidden>
+  <div class="hl-quote" id="hl-pop-quote"></div>
+  <textarea id="hl-pop-note" placeholder="Add a note to this highlight"></textarea>
+  <div class="hl-actions"><button class="link-btn" id="hl-pop-remove">Remove highlight</button><button class="pill-btn" id="hl-pop-save">Save</button></div>
+</div>
+<div id="toast" role="status" aria-live="polite"><span id="toast-msg"></span><button id="toast-undo" hidden>Undo</button></div>
 <script src="app.js"></script>
+<script src="features.js"></script>
 </body>
 </html>

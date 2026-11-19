@@ -3,9 +3,13 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
-# Prefer pythonw.exe (no console window) next to whichever python is on PATH.
-$python = (Get-Command python -ErrorAction SilentlyContinue).Source
-if (-not $python) { throw "python not found on PATH" }
+# Prefer the project venv, so the task survives a reinstall of the global
+# Python (a PC reset removed C:\Python314 and the bot silently stopped).
+# Create it with:  py -3.14 -m venv venv
+$python = Join-Path $root "venv\Scripts\python.exe"
+if (-not (Test-Path $python)) { $python = (Get-Command python -ErrorAction SilentlyContinue).Source }
+if (-not $python) { throw "no venv\Scripts\python.exe and no python on PATH" }
+# pythonw.exe (no console window) sits next to it.
 $pythonw = Join-Path (Split-Path -Parent $python) "pythonw.exe"
 if (-not (Test-Path $pythonw)) { $pythonw = $python }
 Write-Host "Using $pythonw"

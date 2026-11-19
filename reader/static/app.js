@@ -13,8 +13,9 @@ const S = {
   query: "", hits: null,
   current: null, open: null, sig: "",
   settings: {},
+  selected: new Set(), anchor: null,   // multi-select in the list
 };
-const ICON_STAR = '<svg viewBox="0 0 20 20"><path d="M10 2.8l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 8.1l5-.7z"/></svg>';
+const ICON_STAR = '<svg viewBox="0 0 20 20"><path d="M10 16.5s-6.5-3.9-6.5-8.6A3.4 3.4 0 0 1 10 6a3.4 3.4 0 0 1 6.5 1.9c0 4.7-6.5 8.6-6.5 8.6z"/></svg>';
 
 // ---------- helpers
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -145,12 +146,14 @@ function renderRail() {
     ["all", "All notes", count(n => !n.state.archived)],
     ["unread", "Unread", count(n => !n.state.read_at && !n.state.archived)],
     ["progress", "In progress", count(n => !n.state.read_at && n.state.pos > 0.03 && !n.state.archived)],
-    ["starred", "Starred", count(n => n.state.starred)],
+    ["starred", "Favorites", count(n => n.state.starred)],
+    ["highlights", "Highlights", all.reduce((a, n) => a + (n.state.highlights || []).length, 0)],
+    ["comments", "Saved comments", all.reduce((a, n) => a + (n.state.saved_comments || []).length, 0)],
     ["noted", "With my notes", count(n => n.state.my_note && n.state.my_note.trim())],
     ["updated", "Updated since read", count(n => n.updated)],
     ["archived", "Archive", count(n => n.state.archived)],
   ];
-  $("views").innerHTML = views.filter(v => v[2] || ["all", "unread", "starred"].includes(v[0]))
+  $("views").innerHTML = views.filter(v => v[2] || ["all", "unread", "starred", "highlights", "comments"].includes(v[0]))
     .map(([k, l, c]) => `<button class="rail-item ${S.view === k ? "on" : ""}" data-view="${k}"><span class="lbl">${l}</span><span class="n">${c}</span></button>`).join("");
 
   const subs = new Map();
@@ -169,7 +172,7 @@ function renderRail() {
 function itemHTML(n) {
   const st = n.state || {};
   const pos = !st.read_at && st.pos > 0.03 ? `<span class="bar" title="${Math.round(st.pos * 100)}% read"><i style="width:${Math.round(st.pos * 100)}%"></i></span>` : "";
-  return `<li class="item ${isRead(n) ? "read" : ""} ${S.current === n.id ? "on" : ""}" data-id="${esc(n.id)}">
+  return `<li class="item ${isRead(n) ? "read" : ""} ${S.current === n.id ? "on" : ""} ${S.selected.has(n.id) ? "sel" : ""}" data-id="${esc(n.id)}">
     <span class="dot"></span>
     <div class="t">${esc(n.title)}</div>
     ${n.preview ? `<div class="p">${esc(n.preview)}</div>` : ""}
@@ -179,6 +182,8 @@ function itemHTML(n) {
 }
 
 function renderList(keepScroll) {
+  if (S.view === "highlights" || S.view === "comments") return renderCollection(keepScroll);
+  $("list-tools").hidden = false;
   const list = filtered();
   S.visible = list;
   const el = $("list"), top = el.scrollTop;
@@ -188,6 +193,7 @@ function renderList(keepScroll) {
   const empty = $("list-empty");
   empty.hidden = !!list.length;
   if (!list.length) empty.textContent = !S.lib.exists ? `No notes folder at ${S.lib.folder}` : S.query ? `Nothing matches "${S.query}".` : "Nothing here yet.";
+  renderBulkBar();
 }
 
 function renderWelcome() {
@@ -237,7 +243,8 @@ async function openNote(id, versionFile) {
   const sc = $("scroller");
   sc.scrollTop = 0;
   if (!versionFile && pos > 0.03 && pos < 0.97 && !res.state.read_at) {
-    requestAnimationFrame(() => { sc.scrollTop = pos * (sc.scrollHeight - sc.clientHeight); toast("Picked up where you left off"); });
+    // a timer, not requestAnimationFrame: rAF never fires while the window is in the background
+    setTimeout(() => { sc.scrollTop = pos * (sc.scrollHeight - sc.clientHeight); toast("Picked up where you left off"); }, 0);
   }
   updateProgress();
 }
@@ -304,6 +311,7 @@ function renderArticle(res) {
   $("f-op").checked = false;
   $("f-score").value = "-999";
   setAllReplies(!S.settings.collapse_replies);
+  afterArticle(res);
 }
 
 function makeCard(headText) {
@@ -315,6 +323,7 @@ function makeCard(headText) {
   card.dataset.op = m && m[3] ? "1" : "0";
   card.innerHTML = `<div class="c-head"><span class="who">u/${esc(m ? m[1] : headText)}</span>${m && m[3] ? '<span class="op">OP</span>' : ""}<span class="pts">${m ? num(m[2]) + " pts" : ""}</span></div>`;
   card._text = document.createElement("div");
+  card._text.className = "c-body";
   card._replies = document.createElement("div");
   card._replies.className = "replies";
   return card;
@@ -400,7 +409,7 @@ async function setRead(read) {
   n.updated = false;
   renderToolbar(); renderRail(); renderList(true); renderWelcome();
 }
-const toggleStar = () => { const st = S.byId.get(S.current)?.state || {}; patch({ starred: st.starred ? null : true }, st.starred ? "Unstarred" : "Starred"); };
+const toggleStar = () => { const st = S.byId.get(S.current)?.state || {}; patch({ starred: st.starred ? null : true }, st.starred ? "Removed from favorites" : "Added to favorites"); };
 const toggleRead = () => { const st = S.byId.get(S.current)?.state || {}; setRead(!st.read_at).then(() => toast(st.read_at ? "Marked unread" : "Marked read")); };
 const toggleArchive = () => { const st = S.byId.get(S.current)?.state || {}; patch({ archived: st.archived ? null : true }, st.archived ? "Back in the library" : "Archived"); };
 
@@ -478,12 +487,21 @@ function step(dir) {
 }
 
 // ---------- events
-$("list").addEventListener("click", e => { const li = e.target.closest(".item"); if (li) openNote(li.dataset.id); });
+$("list").addEventListener("click", e => {
+  const li = e.target.closest(".item");
+  if (!li) return;
+  if (li.dataset.ref) return openRef(li.dataset.id, li.dataset.ref);   // highlight / saved comment
+  if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); return selectClick(li.dataset.id, e.shiftKey); }
+  if (S.selected.size) clearSelection();
+  S.anchor = li.dataset.id;
+  openNote(li.dataset.id);
+});
 $("continue").addEventListener("click", e => { const b = e.target.closest(".cont"); if (b) openNote(b.dataset.id); });
 $("rail").addEventListener("click", e => {
   const b = e.target.closest(".rail-item");
   if (!b) return;
-  if (b.dataset.view !== undefined) { S.view = b.dataset.view; S.tag = null; }
+  if (b.dataset.stats !== undefined) return showStats();
+  if (b.dataset.view !== undefined) { S.view = b.dataset.view; S.tag = null; clearSelection(true); }
   if (b.dataset.sub !== undefined) S.sub = b.dataset.sub || null;
   if (b.dataset.tag !== undefined) S.tag = S.tag === b.dataset.tag ? null : b.dataset.tag;
   renderRail(); renderList();
@@ -537,6 +555,8 @@ document.addEventListener("keydown", e => {
     if (!$("keys").hidden) { $("keys").hidden = true; return; }
     if (!$("typepanel").hidden) { $("typepanel").hidden = true; return; }
     if (!$("drawer").hidden) { toggleDrawer(false); return; }
+    if (closePopovers()) return;
+    if (S.selected.size) { clearSelection(); return; }
     if (S.query) { $("q").value = ""; onSearch(); }
     document.activeElement.blur();
     return;
@@ -546,8 +566,11 @@ document.addEventListener("keydown", e => {
   if (k === "/") { e.preventDefault(); $("q").focus(); $("q").select(); }
   else if (k === "j" || (k === "ArrowDown" && document.activeElement.id === "list")) { e.preventDefault(); step(1); }
   else if (k === "k" || (k === "ArrowUp" && document.activeElement.id === "list")) { e.preventDefault(); step(-1); }
+  else if (k === "r") surprise();
+  else if (k === "h" && highlightSelection()) e.preventDefault();
   else if (!S.current) return;
-  else if (k === "s") toggleStar();
+  else if (k === "s" || k === "f") toggleStar();
+  else if (k === "b") saveHoveredComment();
   else if (k === "m") toggleRead();
   else if (k === "e") toggleArchive();
   else if (k === "n") { e.preventDefault(); toggleDrawer(); }

@@ -87,18 +87,41 @@ class Api:
     def update_settings(self, changes: dict) -> dict:
         return self.state.update_settings(changes)
 
+    # ----- many notes at once (one write each)
+    def bulk_update(self, note_ids: list[str], changes: dict) -> dict:
+        return self.state.bulk_update(note_ids, changes)
+
+    def bulk_read(self, note_ids: list[str], read: bool) -> dict:
+        return self.state.bulk_update(note_ids, {"read_at": time.time() if read else None})
+
+    def bulk_add_tag(self, note_ids: list[str], tag: str) -> dict:
+        out = {}
+        for nid in note_ids:
+            tags = list(dict.fromkeys([*(self.state.note(nid).get("tags") or []), tag]))
+            out[nid] = dict(self.state.update_note(nid, {"tags": tags}, save=False))
+        self.state.save()
+        return out
+
+    def bulk_set(self, per_note: dict) -> dict:
+        """Different changes per note, e.g. undoing 'mark all read'."""
+        out = {nid: dict(self.state.update_note(nid, ch, save=False)) for nid, ch in per_note.items()}
+        self.state.save()
+        return out
+
     def export_my_notes(self) -> str:
-        """Write every personal note to one markdown file and return its path."""
+        """Write notes, tags, highlights and saved comments to one markdown file."""
         notes = {n.id: n for n in self.lib.notes()[0]}
         lines = ["# My notes on saved Reddit threads", ""]
         count = 0
         for nid, st in self.state.data["notes"].items():
             text = (st.get("my_note") or "").strip()
             tags = st.get("tags") or []
-            if not text and not tags:
+            hls = st.get("highlights") or []
+            saved = st.get("saved_comments") or []
+            if not (text or tags or hls or saved):
                 continue
             n = notes.get(nid)
-            title = n.meta.get("title", nid) if n else nid
+            title = n.summary()["title"] if n else nid
             url = n.meta.get("url", "") if n else ""
             lines += [f"## {title}", ""]
             if url:
@@ -107,6 +130,21 @@ class Api:
                 lines += ["Tags: " + ", ".join(tags), ""]
             if text:
                 lines += [text, ""]
+            if hls:
+                lines += ["### Highlights", ""]
+                for h in hls:
+                    who = f" (u/{h['where']})" if h.get("where") not in (None, "", "post") else ""
+                    lines.append(f"> {h.get('text', '').strip()}{who}")
+                    if h.get("note"):
+                        lines.append(f"\n{h['note'].strip()}")
+                    lines.append("")
+            if saved:
+                lines += ["### Saved comments", ""]
+                for c in saved:
+                    lines.append(f"**u/{c.get('author', '?')}** · {c.get('score', 0)} pts")
+                    lines.append("")
+                    lines += ["> " + l if l.strip() else ">" for l in c.get("text", "").strip().splitlines()]
+                    lines.append("")
             count += 1
         out = self.folder / "_my-notes.md"
         out.write_text("\n".join(lines), encoding="utf-8")

@@ -582,8 +582,27 @@ def test_pipeline(cfg: Config) -> None:
     conn.close()
 
 
+def test_notes_follow_moved_documents(cfg: Config) -> None:
+    """OneDrive backup moved Documents; notes must follow the real folder."""
+    import winpaths
+    from config import Paths
+    moved = Path(tempfile.gettempdir()) / "Moved Documents"
+    real = winpaths._known_documents
+    winpaths._known_documents = lambda: moved
+    try:
+        out = Paths().output_dir
+    finally:
+        winpaths._known_documents = real
+    check("default output_dir follows the moved Documents folder",
+          out == moved / "reddit-notes", str(out))
+    found = winpaths._known_documents()
+    check("known Documents folder resolves on this machine",
+          found is None or found.is_absolute(), str(found))
+
+
 def main() -> int:
     cfg = Config.load()
+    test_notes_follow_moved_documents(cfg)
     test_expansion(cfg)
     test_filters(cfg)
     test_render(cfg)

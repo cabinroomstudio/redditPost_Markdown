@@ -16,7 +16,8 @@ from reader.app import Api, static_dir  # noqa: E402
 from reader.notes import default_notes_dir  # noqa: E402
 
 PUBLIC = {"library", "signature", "open_note", "search", "update_note", "mark_read",
-          "update_settings", "export_my_notes"}
+          "update_settings", "export_my_notes", "bulk_update", "bulk_read", "bulk_add_tag",
+          "bulk_set"}
 
 
 def main() -> None:
